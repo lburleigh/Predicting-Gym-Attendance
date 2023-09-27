@@ -1,0 +1,258 @@
+---
+title: "DataCamp-DataScienceAssociate"
+author: "L Burleigh"
+date: "2023-06-26"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/larn_/Documents/GitHub/Predicting-Gym-Attendance')
+```
+
+```{r load data, include=FALSE}
+# Load necessary libraries
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(tibble)
+```
+
+
+### Step 1
+
+```{r Step1, include = FALSE}
+df <- read.csv("fitness_class_2212.csv")
+
+which(is.na(df), arr.ind=TRUE)
+
+unique(df$months_as_member)
+# Make months numeric
+df$months_as_member <- as.numeric(df$months_as_member)
+
+class(df$weight)
+min(df$weight, na.rm = TRUE)
+max(df$weight, na.rm = TRUE)
+# Replace weight NAs with column average
+df <- df %>% mutate(weight = coalesce(weight, mean(weight)))
+
+min(df$days_before)
+max(df$days_before)
+class(df$days_before)
+# Remove 'days' in some rows of days_before
+df$days_before <- gsub("days", "", as.character(df$days_before))
+# Make days_before numeric
+df$days_before <- as.numeric(df$days_before)
+
+unique(df$day_of_week)
+length(df$day_of_week[which(df$day_of_week == "Fri.")])
+# Make day_of_week labels consistent
+df$day_of_week[which(df$day_of_week == "Monday")] <- "Mon"
+df$day_of_week[which(df$day_of_week == "Wednesday")] <- "Wed"
+df$day_of_week[which(df$day_of_week == "Fri.")] <- "Fri"
+
+unique(df$time)
+class(df$time)
+
+unique(df$category)
+length(df$category[which(df$category == "-")])
+class(df$category)
+# Replace '-' categories with 'unknown'
+df$category[which(df$category == "-")] <- "unknown"
+
+unique(df$attended)
+class(df$attended)
+# Make attended a factor
+df$attended <- as.factor(df$attended)
+```
+
+The dataset contains 1500 rows and 8 columns [with missing values] before cleaning. I have validated all the columns against the criteria in the dataset table:
+
+booking_id: same as description. No missing values. 1500 unique identifiers. integer.
+months_as_member: same as description. No missing values. 72 unique whole integers. converted to numeric for ease of use.
+
+weight: 20 missing values - replaced with overall average of column. lowest value is appropriately 55.41 and cells use 2 decimal places. numeric.
+
+days_before: 25 rows include 'days' after value, which I removed so column includes only number values. No missing values. Minimum value of 1. character converted to numeric for ease of use.
+
+days_of_week: No missing values. Inconsistent labeling of days [i.e., both "Mon" and "Monday" in column] so made all rows consistent with 3 letter day as listed in description, adjusting 71 incorrect rows. character.
+
+time: same as description. Every row includes either 'AM' or 'PM'. No missing values. character.
+
+category: Missing relevant data in 13 cells contain '-' so replaced these with 'unknown' as specified in description. No NAs. character.
+
+attended: Same as description. No missing values - each cell contains either 1 or 0. integer adjusted to factor for ease of use.
+
+After the data validation, the dataset contains 1500 rows and 8 columns.
+
+
+
+### Step 2
+
+```{r Step2, echo = FALSE}
+
+showed <- df %>% filter(attended == 1) 
+  
+ggplot(showed, aes(category, fill = category)) + 
+  geom_bar() + ggtitle("Graph 2 Classes Attended")
+
+
+yesno <- c("Did Not Attend", "Attended")
+names(yesno) <- c("0", "1")
+
+ggplot(df, aes(category, fill = category)) + 
+  geom_bar() +
+  facet_wrap(~attended, labeller = labeller(attended = yesno)) + 
+  ggtitle("Graph 2-2 Class Attendance")
+
+```
+
+From Graph 2 Classes Attended, the most attended class category was HIIT with 213, then followed by Cycling with 110. The attendance of classes is varied, however with the inclusion of Graph 2-2 Class Attendance, we can see that the number of people who attended and did not attend each class vary together as HIIT was also the highest not attended class, followed by Cycling, Strength, Yoga, Aqua, then unknown.
+
+
+### Step 3
+
+```{r Step3, echo = FALSE}
+
+ggplot(df, aes(months_as_member)) + 
+  geom_histogram(bins = 30) + ggtitle("Graph 3-1 Membership Months Distribution")
+
+qqnorm(df$months_as_member, pch = 1, frame = FALSE, main = "Graph 3-2 QQplot \n Membership Length")
+qqline(df$months_as_member, col = "steelblue", lwd = 2)
+
+df$logmonths <- log(df$months_as_member)
+
+ggplot(df, aes(logmonths)) + 
+  geom_histogram(bins = 30) + ggtitle("Graph 3-3 Log Membership Months Distribution")
+
+qqnorm(df$logmonths, pch = 1, frame = FALSE, main = "Graph 3-4 QQplot \n Log Membership Length")
+qqline(df$logmonths, col = "steelblue", lwd = 2)
+
+```
+The months_as_member variable is our target variable. Graph 3-1 Membership Months Distribution shows a positive skew distribution with the majority of members holding a membership for less than 50 months with only 4 over 100 months and an outlier at 148 months. With no negative or zero values, and a qqplot, Graph 3-2 QQplot Membership Length, further indicating a right skewed distribution, a logarithmic transformation was performed. Graph 3-3 Log Membership Months Distribution and Graph 3-4 QQplot Log Membership Length indicate the transformed distribution is much closer to a normal distribution.
+
+
+### Step 4
+
+```{r Step4, echo = FALSE}
+
+ggplot(df, aes(attended, months_as_member)) + 
+  geom_boxplot() + 
+  ggtitle("Graph 4-1 Membership and Attendance Relationship")
+
+dfoutrmv <- df[df$months_as_member != max(df$months_as_member), ]
+
+ggplot(dfoutrmv, aes(attended, months_as_member)) + 
+  geom_boxplot() + 
+  ggtitle("Graph 4-2 Membership and Attendance Relationship")
+
+```
+From Grahp 4-1 Membership and Attendance Relationship, the outlier identified in Graph 3-1 again provides a difficulty in interpreting the relationship properly. After removing the outlier of 148, Graph 4-2 shows that attended sign ups have a larger range of months as a member than sign ups that were not attended and a higher median of membership months with 20 months while the not attended sign ups have a halfway point of 10 months.
+
+
+### Step 5
+
+Predicting whether members will attend a class is a classification problem in machine learning. 
+
+```{r Step5, include = FALSE}
+
+# Split the data into training and testing sets
+set.seed(123)  
+train_indices <- sample(1:nrow(df), 0.7 * nrow(df))  # 70% for training
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+```
+
+
+### Step 6
+
+```{r Step6, echo = FALSE}
+
+# Train the logistic regression model
+logreg_model <- glm(attended ~ . - booking_id, data = train_data, family = binomial)
+
+# Make predictions on the test set
+logreg_pred <- predict(logreg_model, newdata = test_data, type = "response")
+logreg_predclass <- ifelse(logreg_pred >= 0.5, 1, 0)
+
+# Evaluate the model
+logreg_accuracy <- mean(logreg_predclass == test_data$attended)
+print(paste("Accuracy:", logreg_accuracy))
+
+```
+Baseline Model - Logistic Regression Model
+
+
+
+### Step 7
+
+```{r Step7, echo = FALSE}
+
+# Train the random forest model
+rf_model <- randomForest(attended ~ . - booking_id, data = train_data)
+
+# Make predictions on the test set
+rf_pred <- predict(rf_model, newdata = test_data, type = "response")
+rf_predclass <- ifelse(rf_pred == 1, 0, 1)
+
+# Evaluate the model
+rf_accuracy <- mean(rf_predclass == test_data$attended)
+print(paste("Accuracy:", rf_accuracy))
+
+
+```
+Comparison Model - Random Forest Model
+
+
+
+### Step 8
+
+I chose the Logistic Regression model as a baseline model because it is a popular, simple, and efficient model to predict a binary outcome. 
+
+I chose the Random Forest model as a comparison model because it can robustly capture more complex interactions between variables, making predictions by combining multiple decision trees. 
+
+
+### Step 9
+
+```{r Step9, echo = FALSE}
+# Check the distribution of the target variable
+table(df$attended)
+
+# Calculate evaluation metrics for logistic regression
+logreg_predclass <- as.factor(logreg_predclass)
+logreg_precision <- confusionMatrix(logreg_predclass, test_data$attended)$byClass["Pos Pred Value"]
+logreg_recall <- confusionMatrix(logreg_predclass, test_data$attended)$byClass["Sensitivity"]
+logreg_f1 <- 2 * (logreg_precision * logreg_recall) / (logreg_precision + logreg_recall)
+
+# Calculate evaluation metrics for random forest
+rf_predclass <- as.factor(rf_predclass)
+rf_precision <- confusionMatrix(rf_predclass, test_data$attended)$byClass["Pos Pred Value"]
+rf_recall <- confusionMatrix(rf_predclass, test_data$attended)$byClass["Sensitivity"]
+rf_f1 <- 2 * (rf_precision * rf_recall) / (rf_precision + rf_recall)
+
+
+# Create a table with evaluation metrics
+evaluation_table <- tibble(Method = c("Logistic Regression", "Random Forest"),
+                           Accuracy = c(logreg_accuracy, rf_accuracy),
+                           Precision = c(logreg_precision, rf_precision),
+                           Recall = c(logreg_recall, rf_recall),
+                           F1_Score = c(logreg_f1, rf_f1))
+
+# Print the evaluation table
+print(evaluation_table)
+
+```
+
+I am choosing the evaluation metric(s) precision, recall, and F1 score due to the imbalance of the `attended` variable. Precision gives the proportion of true positives in all positive predictions, recall gives the proportion of true positives in all positive instances, and the F1 score combines precision and recall to give a balanced msaure of the model's performance. 
+
+
+### Step 10
+
+A larger precision, recall, and F1 score indicate a better performing model. 
+
+The Logistic Regression model has a higher precision, recall, and F1 score. The F1 score is a harmonic mean of the precision and recall, balancing between the two measures in which precision prioritizes cost of false positives and recall prioritizes cost of false negatives. 
+
+Given the classification is regarding and imbalanced fitness class attendance and the consequences of false positives and false negatives for this variable are similar, I would prioritize the F1 score, indicating the Logistic Regression model performed better at predicting whether a member signed up will attend the class based on the variables collected in the data frame.
